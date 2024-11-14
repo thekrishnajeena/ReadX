@@ -59,6 +59,7 @@ dependencies {
     implementation(libs.androidx.ui.graphics)
     implementation(libs.androidx.ui.tooling.preview)
     implementation(libs.androidx.material3)
+    implementation(libs.androidx.appcompat)
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)
@@ -66,4 +67,16 @@ dependencies {
     androidTestImplementation(libs.androidx.ui.test.junit4)
     debugImplementation(libs.androidx.ui.tooling)
     debugImplementation(libs.androidx.ui.test.manifest)
+
+
+
+    implementation("androidx.appcompat:appcompat:1.7.0")
+
+    implementation ("com.github.atwa:filepicker:2.0.0")
+        implementation("io.github.afreakyelf:Pdf-Viewer:2.1.1")
+
+    implementation("io.coil-kt.coil3:coil-compose:3.0.2")
+
+
+    implementation("net.engawapg.lib:zoomable:1.6.2")
 }
