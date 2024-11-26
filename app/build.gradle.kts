@@ -44,9 +44,15 @@ android {
     }
     packaging {
         resources {
+            excludes += "/META-INF/DEPENDENCIES"
+            excludes += "/META-INF/LICENSE"
+            excludes += "/META-INF/LICENSE.txt"
+            excludes +="/META-INF/NOTICE"
+            excludes +="/META-INF/NOTICE.txt"
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
         }
     }
+
 }
 
 dependencies {
@@ -73,10 +79,17 @@ dependencies {
     implementation("androidx.appcompat:appcompat:1.7.0")
 
     implementation ("com.github.atwa:filepicker:2.0.0")
-        implementation("io.github.afreakyelf:Pdf-Viewer:2.1.1")
 
     implementation("io.coil-kt.coil3:coil-compose:3.0.2")
 
 
     implementation("net.engawapg.lib:zoomable:1.6.2")
+
+    implementation("com.tom-roush:pdfbox-android:2.0.27.0")
+
+    implementation("com.google.accompanist:accompanist-permissions:0.36.0")
+
+    implementation ("androidx.navigation:navigation-compose:2.7.3")
+
+
 }
