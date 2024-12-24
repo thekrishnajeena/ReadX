@@ -13,13 +13,19 @@ import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.rememberTransformableState
 import androidx.compose.foundation.gestures.transformable
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.text.selection.SelectionContainer
+import androidx.compose.material3.Button
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -28,6 +34,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.geometry.Offset
@@ -38,7 +45,9 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.Popup
 import com.tom_roush.pdfbox.android.PDFBoxResourceLoader
 import com.tom_roush.pdfbox.pdmodel.PDDocument
 import com.tom_roush.pdfbox.text.PDFTextStripper
@@ -119,11 +128,14 @@ fun PDFReader(file: File) {
                 // Collect bitmap content and display
                 page.pageContent.collectAsState().value?.let { bitmap ->
                     if (!bitmap.isRecycled) {
+
+                       Box(modifier = Modifier.fillMaxSize().align(Alignment.Center)){
                         Image(
                             bitmap = bitmap.asImageBitmap(),
                             contentDescription = "PDF page number: $index",
-                            modifier = Modifier.fillMaxWidth().clickable {
-                                Log.i(TAG, "${extractTextFromPage(file, index + 1)}") }
+                            modifier = Modifier.fillMaxWidth().padding(5.dp).background(Color.White)
+//                                .clickable {
+//                                Log.i(TAG, "${extractTextFromPage(file, index + 1)}") }
                                 .drawWithContent {
                                     // Draw the selection rectangle
                                     selectionState.value?.let { selection ->
@@ -142,6 +154,8 @@ fun PDFReader(file: File) {
                                 },
                             contentScale = ContentScale.FillWidth
                         )
+
+                    }
                     }
                 }
             }
@@ -231,7 +245,7 @@ fun extractTextFromPage(pdfFile: File, pageNumber: Int): String {
 
     PDDocument.load(pdfFile).use { document ->
         if (pageNumber <= document.numberOfPages && pageNumber > 0) {
-            val pdfStripper = PDFTextStripper()
+            val pdfStripper = CustomPDFTextStripper()
             pdfStripper.startPage = pageNumber
             pdfStripper.endPage = pageNumber
             extractedText = pdfStripper.getText(document)
@@ -242,3 +256,28 @@ fun extractTextFromPage(pdfFile: File, pageNumber: Int): String {
     }
     return extractedText
 }
+
+
+@Composable
+fun CustomToolbar(
+    offset: IntOffset,
+    onCustomAction: (String) -> Unit
+) {
+    Popup(offset = offset) {
+        Box(
+            modifier = Modifier.fillMaxSize()
+        ) {
+            Button(onClick = { onCustomAction("Search") }) {
+                Text("Search")
+            }
+            Button(onClick = { onCustomAction("Share") }) {
+                Text("Share")
+            }
+            Button(onClick = { onCustomAction("Translate") }) {
+                Text("Translate")
+            }
+        }
+    }
+}
+
+

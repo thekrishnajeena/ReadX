@@ -21,26 +21,36 @@ import android.os.Environment
 import android.provider.MediaStore
 import android.provider.Settings
 import android.widget.Toast
-import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.annotation.RequiresApi
 import androidx.appcompat.app.AppCompatActivity
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.Button
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextField
+import androidx.compose.material3.TextFieldDefaults
+import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -48,11 +58,13 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import androidx.core.net.toFile
-import androidx.core.net.toUri
+import androidx.compose.ui.unit.sp
 import androidx.navigation.NavController
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
@@ -65,10 +77,12 @@ import com.google.accompanist.permissions.isGranted
 import com.google.accompanist.permissions.rememberPermissionState
 import com.krishnajeena.readx.pdfreader.PDFReader
 import com.krishnajeena.readx.ui.theme.ReadXTheme
-import org.bouncycastle.oer.its.ieee1609dot2.basetypes.Elevation
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import java.io.File
 
 class MainActivity : AppCompatActivity() {
+    @OptIn(ExperimentalMaterial3Api::class)
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
@@ -78,52 +92,123 @@ class MainActivity : AppCompatActivity() {
         val fp = FilePicker.getInstance(ac)
         setContent {
             ReadXTheme {
-                Scaffold(modifier = Modifier.fillMaxSize()) { innerPadding ->
+
+                var isSearchMode by remember { mutableStateOf(false) }
+                var searchQuery by remember { mutableStateOf("") }
+                var isSearchEnabled by remember { mutableStateOf(true) }
+
+                Scaffold(
+                    topBar = {
+                        TopAppBar(
+                            title = {
+                                // AnimatedContent for smooth transitions
+                                AnimatedContent(targetState = isSearchMode) { targetState ->
+                                    if (targetState) {
+                                        // Search bar when in search mode
+                                        TextField(
+                                            value = searchQuery,
+                                            onValueChange = { searchQuery = it },
+                                            placeholder = { Text("Search...") },
+                                            singleLine = true,
+                                            modifier = Modifier
+                                                .fillMaxWidth(0.9f) // Occupy 90% width
+                                                .height(55.dp) // Reduced height for proper alignment
+                                                .clip(RoundedCornerShape(15.dp)) // Rounded corners
+                                                .background(MaterialTheme.colorScheme.surfaceVariant)
+                                                .padding(horizontal = 8.dp),
+                                            colors = TextFieldDefaults.textFieldColors(
+                                                focusedIndicatorColor = Color.Transparent, // Removes underline when focused
+                                                unfocusedIndicatorColor = Color.Transparent // Removes underline when unfocused
+                                            ),
+                                            textStyle = TextStyle(
+                                                fontSize = 14.sp // Smaller font size
+                                            ),
+                                            leadingIcon = {
+                                                IconButton(onClick = { isSearchMode = false
+                                                searchQuery = ""}) {
+                                                    Icon(Icons.Default.Close, contentDescription = "Close")
+                                                }
+                                            }
+                                        )
+                                    } else {
+                                        // Title when not in search mode
+                                        Text("ReadX", textAlign = TextAlign.Start)
+                                    }
+                                }
+                            },
+                            actions = {
+                                if (!isSearchMode && isSearchEnabled) {
+                                    IconButton(onClick = { isSearchMode = true }) {
+                                        Icon(
+                                            imageVector = Icons.Filled.Search,
+                                            contentDescription = "Search"
+                                        )
+                                    }
+                                }
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = TopAppBarDefaults.mediumTopAppBarColors()
+                        )
+                    },
+                    modifier = Modifier.fillMaxSize()
+                )  { innerPadding ->
 
                     val navController = rememberNavController()
                     var isTrue by remember{mutableStateOf(false)}
 
                     var fi by remember { mutableStateOf(File("")) }
                     val context = LocalContext.current
+                    var files by remember { mutableStateOf(listFiles(context, "pdf")) }
+                    var filteredFiles by remember {mutableStateOf(files)}
 
+                    val fileNamesCache = remember { mutableMapOf<Uri, String>() }
+
+                    LaunchedEffect(files) {
+                        // Pre-fetch file names and cache them
+                        withContext(Dispatchers.IO){
+                        files.forEach { uri ->
+                            if (!fileNamesCache.containsKey(uri)) {
+                                val fileName = context.contentResolver.query(uri, arrayOf(MediaStore.Files.FileColumns.DISPLAY_NAME), null, null, null)?.use { cursor ->
+                                    if (cursor.moveToFirst()) {
+                                        cursor.getString(cursor.getColumnIndexOrThrow(MediaStore.Files.FileColumns.DISPLAY_NAME))
+                                    } else null
+                                } ?: "Unknown File"
+                                fileNamesCache[uri] = fileName
+                            }
+                        }
+                    }
+                    }
+
+                    LaunchedEffect(searchQuery) {
+                        filteredFiles = if (searchQuery.isEmpty()) {
+                            files
+                        } else {
+                            files.filter { uri ->
+                                val fileName = fileNamesCache[uri] ?: "Unknown File"
+                                fileName.startsWith(searchQuery, ignoreCase = true)
+                            }
+                        }
+                    }
 
                     NavHost(navController, "start"){
 
                         composable("start"){
                             Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
 
-//                                if(isTrue){
-//                                    navController.navigate("readX")
-//                                }
-//
-//                                else{
-//                       Button(
-//                           onClick = {
-//                               fp.pickPdf { fil ->
-//                                   isTrue = true
-//                                   fi = fil?.file.toString()
-//                               }
-//                           },
-//                           modifier = Modifier
-//                       ) {
-//                           Text("Hello")
-//                       }
-
                                     Column(modifier = Modifier.fillMaxSize().padding(innerPadding)) {
-                                        var files by remember {mutableStateOf<List<Uri>>(emptyList())}
-                                        //   RequestPermission { files = listFiles(context, "pdf") }
+
 
                                         if(!Environment.isExternalStorageManager()) {
                                             requestAllFilesAccessPermission(context = context) {
                                                   files = listFiles(context, "pdf")
                                             }
                                         }
-                                        files = listFiles(context, "pdf")
-                                        FileList(files, context, navController)
+
+                                        FileList(filteredFiles, context, navController, onItemClick = {
+                                            isSearchMode = false
+                                        })
                                     }
                                 }
-
-                          //  }
 
                         }
 
@@ -151,6 +236,14 @@ class MainActivity : AppCompatActivity() {
                 }
             }
         }
+    }
+
+    private fun onSearchClosed() {
+        TODO("Not yet implemented")
+    }
+
+    private fun onSearchQueryChanged(it: String) {
+        TODO("Not yet implemented")
     }
 
 }
@@ -187,7 +280,7 @@ fun copyContentUriToFile(context: Context, contentUri: Uri, destinationFile: Fil
 
 
 @Composable
-fun FileList(files: List<Uri>, context: Context, navController : NavController) {
+fun FileList(files: List<Uri>, context: Context, navController: NavController, onItemClick: () -> Unit) {
     LazyColumn(modifier = Modifier.fillMaxSize()) {
         items(files) { fileUri ->
             val fileName = remember(fileUri) {
@@ -200,7 +293,8 @@ fun FileList(files: List<Uri>, context: Context, navController : NavController) 
             }
 
             Card(modifier = Modifier.fillMaxWidth().padding(5.dp).height(60.dp)
-                .clickable { navController.navigate("readX/${Uri.encode(fileUri.toString())}")  },
+                .clickable { navController.navigate("readX/${Uri.encode(fileUri.toString())}")
+                           onItemClick },
                 shape = RoundedCornerShape(5.dp),
                 elevation = CardDefaults.elevatedCardElevation(10.dp)) {
                 Text(text = fileName ?: "Unknown File", modifier = Modifier.padding(8.dp))
@@ -208,8 +302,6 @@ fun FileList(files: List<Uri>, context: Context, navController : NavController) 
         }
     }
 }
-
-
 
 @Composable
 fun PdfPageView(file: File, pageIndex: Int) {
