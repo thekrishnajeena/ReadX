@@ -1,9 +1,11 @@
 package com.krishnajeena.readx
 
 import android.Manifest
+import android.app.Activity
 import android.content.ContentUris
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.graphics.pdf.PdfRenderer
 import android.net.Uri
@@ -20,9 +22,12 @@ import android.os.Bundle
 import android.os.Environment
 import android.provider.MediaStore
 import android.provider.Settings
+import android.util.Log
 import android.widget.Toast
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.ActivityResultLauncher
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.annotation.RequiresApi
 import androidx.appcompat.app.AppCompatActivity
 import androidx.compose.animation.AnimatedContent
@@ -56,6 +61,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshots.SnapshotStateList
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -65,6 +71,10 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.app.ActivityCompat
+import androidx.core.content.ContextCompat
+import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
+import androidx.lifecycle.lifecycleScope
 import androidx.navigation.NavController
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
@@ -78,71 +88,131 @@ import com.google.accompanist.permissions.rememberPermissionState
 import com.krishnajeena.readx.pdfreader.PDFReader
 import com.krishnajeena.readx.ui.theme.ReadXTheme
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
 
 class MainActivity : AppCompatActivity() {
+
+    private lateinit var files: SnapshotStateList<Uri>
+
+    private val requestPermissionLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { isGranted ->
+        if (isGranted) {
+            refreshFileList("pdf")
+        } else {
+            showToast("Permission denied")
+        }
+    }
+
+    private val resultLauncher = registerForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) {
+        if (hasManageExternalStoragePermission()) {
+            refreshFileList("pdf")
+        } else {
+            showToast("Permission denied")
+        }
+    }
+
+    private fun showToast(msg: String) {
+        Toast.makeText(this, msg, Toast.LENGTH_SHORT).show()
+    }
+
+    private fun refreshFileList(type: String) {
+        files.clear()
+        files.addAll(listFiles(this, type))
+        Log.i("Refresh:::::::", files.toString())
+    }
+
+    private fun requestStoragePermission() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            if (!hasManageExternalStoragePermission()) {
+                val intent = Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION)
+                resultLauncher.launch(intent)
+            } else {
+                Log.i("Refresh:::::::", "List)")
+                refreshFileList("pdf")
+            }
+        } else {
+            requestPermissionLauncher.launch(Manifest.permission.READ_EXTERNAL_STORAGE)
+        }
+    }
+
+    private fun hasManageExternalStoragePermission(): Boolean {
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            Environment.isExternalStorageManager()
+        } else {
+            ContextCompat.checkSelfPermission(
+                this,
+                Manifest.permission.READ_EXTERNAL_STORAGE
+            ) == PackageManager.PERMISSION_GRANTED
+        }
+    }
+
     @OptIn(ExperimentalMaterial3Api::class)
     override fun onCreate(savedInstanceState: Bundle?) {
+        val splashscreen = installSplashScreen()
+        var keepSplashScreen = true
         super.onCreate(savedInstanceState)
+
+        splashscreen.setKeepOnScreenCondition { keepSplashScreen }
+        lifecycleScope.launch {
+            delay(500)
+            keepSplashScreen = false
+        }
+
         enableEdgeToEdge()
 
+        files = mutableStateListOf()
 
-        val ac = this
-        val fp = FilePicker.getInstance(ac)
         setContent {
             ReadXTheme {
-
                 var isSearchMode by remember { mutableStateOf(false) }
                 var searchQuery by remember { mutableStateOf("") }
-                var isSearchEnabled by remember { mutableStateOf(true) }
 
                 Scaffold(
                     topBar = {
                         TopAppBar(
                             title = {
-                                // AnimatedContent for smooth transitions
                                 AnimatedContent(targetState = isSearchMode) { targetState ->
                                     if (targetState) {
-                                        // Search bar when in search mode
                                         TextField(
                                             value = searchQuery,
                                             onValueChange = { searchQuery = it },
                                             placeholder = { Text("Search...") },
                                             singleLine = true,
                                             modifier = Modifier
-                                                .fillMaxWidth(0.9f) // Occupy 90% width
-                                                .height(55.dp) // Reduced height for proper alignment
-                                                .clip(RoundedCornerShape(15.dp)) // Rounded corners
+                                                .fillMaxWidth(0.9f)
+                                                .height(55.dp)
+                                                .clip(RoundedCornerShape(15.dp))
                                                 .background(MaterialTheme.colorScheme.surfaceVariant)
                                                 .padding(horizontal = 8.dp),
                                             colors = TextFieldDefaults.textFieldColors(
-                                                focusedIndicatorColor = Color.Transparent, // Removes underline when focused
-                                                unfocusedIndicatorColor = Color.Transparent // Removes underline when unfocused
+                                                focusedIndicatorColor = Color.Transparent,
+                                                unfocusedIndicatorColor = Color.Transparent
                                             ),
-                                            textStyle = TextStyle(
-                                                fontSize = 14.sp // Smaller font size
-                                            ),
+                                            textStyle = TextStyle(fontSize = 14.sp),
                                             leadingIcon = {
-                                                IconButton(onClick = { isSearchMode = false
-                                                searchQuery = ""}) {
+                                                IconButton(onClick = {
+                                                    isSearchMode = false
+                                                    searchQuery = ""
+                                                }) {
                                                     Icon(Icons.Default.Close, contentDescription = "Close")
                                                 }
                                             }
                                         )
                                     } else {
-                                        // Title when not in search mode
                                         Text("ReadX", textAlign = TextAlign.Start)
                                     }
                                 }
                             },
                             actions = {
-                                if (!isSearchMode && isSearchEnabled) {
+                                if (!isSearchMode) {
                                     IconButton(onClick = { isSearchMode = true }) {
-                                        Icon(
-                                            imageVector = Icons.Filled.Search,
-                                            contentDescription = "Search"
-                                        )
+                                        Icon(imageVector = Icons.Filled.Search, contentDescription = "Search")
                                     }
                                 }
                             },
@@ -151,102 +221,56 @@ class MainActivity : AppCompatActivity() {
                         )
                     },
                     modifier = Modifier.fillMaxSize()
-                )  { innerPadding ->
+                ) { innerPadding ->
 
                     val navController = rememberNavController()
-                    var isTrue by remember{mutableStateOf(false)}
-
-                    var fi by remember { mutableStateOf(File("")) }
                     val context = LocalContext.current
-                    var files by remember { mutableStateOf(listFiles(context, "pdf")) }
-                    var filteredFiles by remember {mutableStateOf(files)}
 
-                    val fileNamesCache = remember { mutableMapOf<Uri, String>() }
-
-                    LaunchedEffect(files) {
-                        // Pre-fetch file names and cache them
-                        withContext(Dispatchers.IO){
-                        files.forEach { uri ->
-                            if (!fileNamesCache.containsKey(uri)) {
-                                val fileName = context.contentResolver.query(uri, arrayOf(MediaStore.Files.FileColumns.DISPLAY_NAME), null, null, null)?.use { cursor ->
-                                    if (cursor.moveToFirst()) {
-                                        cursor.getString(cursor.getColumnIndexOrThrow(MediaStore.Files.FileColumns.DISPLAY_NAME))
-                                    } else null
-                                } ?: "Unknown File"
-                                fileNamesCache[uri] = fileName
-                            }
-                        }
-                    }
+                    // Request permission on first load
+                    LaunchedEffect(Unit) {
+                        requestStoragePermission()
                     }
 
-                    LaunchedEffect(searchQuery) {
-                        filteredFiles = if (searchQuery.isEmpty()) {
-                            files
-                        } else {
-                            files.filter { uri ->
-                                val fileName = fileNamesCache[uri] ?: "Unknown File"
-                                fileName.startsWith(searchQuery, ignoreCase = true)
-                            }
-                        }
-                    }
-
-                    NavHost(navController, "start"){
-
-                        composable("start"){
+                    NavHost(navController, "start") {
+                        composable("start") {
                             Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-
-                                    Column(modifier = Modifier.fillMaxSize().padding(innerPadding)) {
-
-
-                                        if(!Environment.isExternalStorageManager()) {
-                                            requestAllFilesAccessPermission(context = context) {
-                                                  files = listFiles(context, "pdf")
-                                            }
-                                        }
-
-                                        FileList(filteredFiles, context, navController, onItemClick = {
-                                            isSearchMode = false
-                                        })
+                                Column(
+                                    modifier = Modifier
+                                        .fillMaxSize()
+                                        .padding(innerPadding)
+                                ) {
+                                    FileList(files, context, navController) {
+                                        isSearchMode = false
+                                        searchQuery = ""
                                     }
                                 }
-
+                            }
                         }
 
                         composable("readX/{uri}",
-                            arguments = listOf(navArgument("uri") { type = NavType.StringType })){ backStackEntry ->
-                            val uriString = backStackEntry.arguments?.getString("uri")
-                            val uri = uriString?.let { Uri.parse(it) }
-                            if (uri != null) {
-                               getFilePathFromUri(context, uri)?.let {
-                                    PDFReader   (
-                                        File(it)
-                                    )
+                            arguments = listOf(navArgument("uri") { type = NavType.StringType })
+                        ) { backStackEntry ->
+                            val uri = backStackEntry.arguments?.getString("uri")?.let(Uri::parse)
+                            uri?.let {
+                                getFilePathFromUri(context, it)?.let { path ->
+                                    isSearchMode = false
+                                    searchQuery = ""
+                                    PDFReader(File(path))
                                 }
-                            }
-                            else {
-                                Box(modifier = Modifier.fillMaxSize()){
-                                    Text("Uri null!")
+                            } ?: run {
+                                Box(modifier = Modifier.fillMaxSize()) {
+                                    Text("Uri is null!")
                                 }
                             }
                         }
-
                     }
-
-
                 }
             }
         }
     }
-
-    private fun onSearchClosed() {
-        TODO("Not yet implemented")
-    }
-
-    private fun onSearchQueryChanged(it: String) {
-        TODO("Not yet implemented")
-    }
-
 }
+
+
 fun getFilePathFromUri(context: Context, uri: Uri): String? {
     var filePath: String? = null
     if ("content".equals(uri.scheme, ignoreCase = true)) {
@@ -264,23 +288,9 @@ fun getFilePathFromUri(context: Context, uri: Uri): String? {
 }
 
 
-fun copyContentUriToFile(context: Context, contentUri: Uri, destinationFile: File): File? {
-    return try {
-        context.contentResolver.openInputStream(contentUri)?.use { inputStream ->
-            destinationFile.outputStream().use { outputStream ->
-                inputStream.copyTo(outputStream)
-            }
-        }
-        destinationFile
-    } catch (e: Exception) {
-        e.printStackTrace()
-        null
-    }
-}
-
-
 @Composable
 fun FileList(files: List<Uri>, context: Context, navController: NavController, onItemClick: () -> Unit) {
+    Log.i("TAG::::::", files.toString())
     LazyColumn(modifier = Modifier.fillMaxSize()) {
         items(files) { fileUri ->
             val fileName = remember(fileUri) {
@@ -293,8 +303,10 @@ fun FileList(files: List<Uri>, context: Context, navController: NavController, o
             }
 
             Card(modifier = Modifier.fillMaxWidth().padding(5.dp).height(60.dp)
-                .clickable { navController.navigate("readX/${Uri.encode(fileUri.toString())}")
-                           onItemClick },
+                .clickable {
+                    onItemClick
+                    navController.navigate("readX/${Uri.encode(fileUri.toString())}")
+                          },
                 shape = RoundedCornerShape(5.dp),
                 elevation = CardDefaults.elevatedCardElevation(10.dp)) {
                 Text(text = fileName ?: "Unknown File", modifier = Modifier.padding(8.dp))
@@ -303,29 +315,6 @@ fun FileList(files: List<Uri>, context: Context, navController: NavController, o
     }
 }
 
-@Composable
-fun PdfPageView(file: File, pageIndex: Int) {
-    var scale by remember { mutableStateOf(1f) }
-    var bitmap by remember { mutableStateOf<Bitmap?>(null) }
-
-    LaunchedEffect(file, pageIndex, scale) {
-        bitmap = renderPdfPage(file, pageIndex, scale)
-    }
-
-    bitmap?.let {
-        Image(
-            bitmap = it.asImageBitmap(),
-            contentDescription = null,
-            modifier = Modifier
-                .fillMaxSize()
-                .pointerInput(Unit) {
-                    detectTransformGestures { _, _, zoom, _ ->
-                        scale *= zoom
-                    }
-                }
-        )
-    }
-}
 
 fun renderPdfPage(file: File, pageIndex: Int, scale: Float): Bitmap? {
     val pdfRenderer = PdfRenderer(ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_READ_ONLY))
@@ -341,64 +330,36 @@ fun renderPdfPage(file: File, pageIndex: Int, scale: Float): Bitmap? {
 
     return bitmap
 }
+fun listFiles(context: Context, type: String): List<Uri> {
+    val uris = mutableListOf<Uri>()
+    val contentUri = MediaStore.Files.getContentUri(MediaStore.VOLUME_EXTERNAL)
 
-fun listFiles(context: Context, fileType: String): List<Uri> {
-    val files = mutableListOf<Uri>()
+    val projection = arrayOf(
+        MediaStore.Files.FileColumns._ID,
+        MediaStore.Files.FileColumns.DISPLAY_NAME,
+        MediaStore.Files.FileColumns.MIME_TYPE
+    )
 
-    // Define the file MIME type to filter
-    val mimeType = when (fileType.lowercase()) {
-        "pdf" -> "application/pdf"
-        "image" -> "image/*"
-        "text" -> "text/plain"
-        else -> "*/*"
-    }
+    val selection = "${MediaStore.Files.FileColumns.MIME_TYPE} = ?"
+    val selectionArgs = arrayOf("application/pdf")
 
-    // Query MediaStore for files
-    val projection = arrayOf(MediaStore.Files.FileColumns._ID, MediaStore.Files.FileColumns.DISPLAY_NAME)
-    val selection = "${MediaStore.Files.FileColumns.MIME_TYPE} LIKE ?"
-    val selectionArgs = arrayOf(mimeType)
-    val uri = MediaStore.Files.getContentUri("external")
+    val cursor = context.contentResolver.query(
+        contentUri,
+        projection,
+        selection,
+        selectionArgs,
+        null
+    )
 
-    context.contentResolver.query(uri, projection, selection, selectionArgs, null)?.use { cursor ->
-        val idColumn = cursor.getColumnIndexOrThrow(MediaStore.Files.FileColumns._ID)
-        while (cursor.moveToNext()) {
-            val id = cursor.getLong(idColumn)
-            val contentUri = ContentUris.withAppendedId(uri, id)
-            files.add(contentUri)
+    cursor?.use {
+        val idColumn = it.getColumnIndexOrThrow(MediaStore.Files.FileColumns._ID)
+
+        while (it.moveToNext()) {
+            val id = it.getLong(idColumn)
+            val uri = ContentUris.withAppendedId(contentUri, id)
+            uris.add(uri)
         }
     }
 
-    return files
-}
-
-@RequiresApi(Build.VERSION_CODES.R)
-@OptIn(ExperimentalPermissionsApi::class)
-@Composable
-fun RequestPermission(onGranted: () -> Unit) {
-    val permissionState = rememberPermissionState(permission = Manifest.permission.MANAGE_EXTERNAL_STORAGE)
-
-    LaunchedEffect(key1 = permissionState.status) {
-        if (permissionState.status.isGranted) {
-            onGranted()
-        } else {
-            permissionState.launchPermissionRequest()
-        }
-    }
-
-    if (!permissionState.status.isGranted) {
-        Text(text = "Please grant storage permission")
-    }
-}
-
-fun requestAllFilesAccessPermission(context: Context, onGranted: () -> Unit) {
-    if (!Environment.isExternalStorageManager()) {
-        val intent = Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION).apply {
-            data = Uri.parse("package:${context.packageName}")
-        }
-        context.startActivity(intent)
-    } else {
-        // Permission already granted
-        onGranted()
-        Toast.makeText(context, "All Files Access Granted", Toast.LENGTH_SHORT).show()
-    }
+    return uris
 }

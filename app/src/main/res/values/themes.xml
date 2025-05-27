@@ -2,4 +2,16 @@
 <resources>
 
     <style name="Theme.ReadX" parent="Theme.AppCompat.Light.NoActionBar" />
+
+    <style name="Theme.ReadX.Splash" parent="Theme.SplashScreen">
+    <!-- Splash screen background color -->
+    <item name="windowSplashScreenBackground">@color/white</item>
+    <!-- Splash screen logo -->
+    <item name="windowSplashScreenAnimatedIcon">@mipmap/ic_launcher</item>
+
+    <!-- Animation duration -->
+    <item name="windowSplashScreenAnimationDuration">500</item>
+        <item name="postSplashScreenTheme">@style/Theme.ReadX</item>
+
+    </style>
 </resources>

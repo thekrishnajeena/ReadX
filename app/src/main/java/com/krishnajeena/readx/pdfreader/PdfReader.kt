@@ -6,6 +6,7 @@ import android.graphics.Bitmap.createBitmap
 import android.graphics.pdf.PdfRenderer
 import android.os.ParcelFileDescriptor
 import android.util.Log
+import android.util.LruCache
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -51,6 +52,7 @@ import androidx.compose.ui.window.Popup
 import com.tom_roush.pdfbox.android.PDFBoxResourceLoader
 import com.tom_roush.pdfbox.pdmodel.PDDocument
 import com.tom_roush.pdfbox.text.PDFTextStripper
+import com.tom_roush.pdfbox.text.TextPosition
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -59,14 +61,17 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
+import net.engawapg.lib.zoomable.ZoomState
 import net.engawapg.lib.zoomable.rememberZoomState
 import net.engawapg.lib.zoomable.zoomable
+import org.bouncycastle.asn1.cms.Time
 import java.io.File
 @Composable
 fun PDFReader(file: File) {
     PDFBoxResourceLoader.init(LocalContext.current)
 
-    // Remembering the PdfRender instance for lazy loading
+    // Initialize PdfRender with file descriptor
     val pdfRender = remember(file) {
         PdfRender(
             fileDescriptor = ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_READ_ONLY)
@@ -77,113 +82,74 @@ fun PDFReader(file: File) {
         onDispose { pdfRender.close() }
     }
 
-    // Remember zoom and selection states
+    // Zoom and scroll states
     val zoomState = rememberZoomState()
-    val selectionState = remember { mutableStateOf<Selection?>(null) }
     val scrollState = rememberLazyListState()
 
-    // Handling touch gestures for selection
-    Box(
-        modifier = Modifier.fillMaxSize()
-    ) {
+    Box(modifier = Modifier.fillMaxSize()) {
         LazyColumn(
             state = scrollState,
             modifier = Modifier
                 .fillMaxSize()
                 .zoomable(zoomState)
-                .pointerInput(Unit) {
-                    // Detect long press for starting selection
-                    detectTapGestures(
-                        onPress = { offset ->
-                            // Start of long press to begin selection
-                            val pressStartTime = System.currentTimeMillis()
-                            awaitPointerEventScope {
-                                val event = awaitPointerEvent()
-                                // Wait for a long press (500 ms threshold)
-                                if (System.currentTimeMillis() - pressStartTime >= 500) {
-                                    // Mark the start of selection
-                                    selectionState.value = Selection(startX = offset.x, startY = offset.y)
-                                }
-                            }
-                        }
-                    )
-                    // Handle drag gesture to extend the selection
-                    detectDragGestures { _, dragAmount ->
-                        selectionState.value?.let {
-                            // Update the end points of the selection based on drag
-                            val newEndX = it.endX + dragAmount.x
-                            val newEndY = it.endY + dragAmount.y
-                            selectionState.value = it.copy(endX = newEndX, endY = newEndY)
-                        }
-                    }
-                }
         ) {
-            items(count = pdfRender.pageCount) { index ->
+            items(pdfRender.pageCount, key = { index -> "${index}_${zoomState.scale}" }) { index ->
                 val page = pdfRender.pageLists[index]
+                val scale = zoomState.scale
 
-                LaunchedEffect(key1 = zoomState.scale) {
-                    page.load(zoomState.scale)
-                }
+                // Render each page
+                PageContent(page, scale)
+            }
+        }
 
-                // Collect bitmap content and display
-                page.pageContent.collectAsState().value?.let { bitmap ->
-                    if (!bitmap.isRecycled) {
-
-                       Box(modifier = Modifier.fillMaxSize().align(Alignment.Center)){
-                        Image(
-                            bitmap = bitmap.asImageBitmap(),
-                            contentDescription = "PDF page number: $index",
-                            modifier = Modifier.fillMaxWidth().padding(5.dp).background(Color.White)
-//                                .clickable {
-//                                Log.i(TAG, "${extractTextFromPage(file, index + 1)}") }
-                                .drawWithContent {
-                                    // Draw the selection rectangle
-                                    selectionState.value?.let { selection ->
-                                        val startX = selection.startX
-                                        val startY = selection.startY
-                                        val endX = selection.endX
-                                        val endY = selection.endY
-                                        drawRect(
-                                            color = Color.Blue.copy(alpha = 0.5f),
-                                            size = Size(endX - startX, endY - startY),
-                                            topLeft = Offset(startX, startY)
-                                        )
-                                    }
-                                    // Draw the content of the page
-                                    drawContent()
-                                },
-                            contentScale = ContentScale.FillWidth
-                        )
-
-                    }
-                    }
-                }
+        LaunchedEffect(Unit) {
+            withContext(Dispatchers.IO){
+                val start = System.currentTimeMillis()
+                val coordinatesData = extractTextFromPage(file, 7)
+                val end = System.currentTimeMillis()
+                Log.i("TAG:Coor", "Data: ${coordinatesData.toString()}")
+                Log.i("Time: ",  "extracted in ${end - start} ms")
             }
         }
     }
 }
 
-data class Selection(
-    val startX: Float,
-    val startY: Float,
-    val endX: Float = startX,
-    val endY: Float = startY
-)
+@Composable
+private fun PageContent(page: PdfRender.Page, scale: Float) {
+    LaunchedEffect(scale) {
+        page.load(scale)
+    }
 
+    val bitmap by page.pageContent.collectAsState()
 
-
-// Your PdfRender class should remain the same as in the original code
+    bitmap?.let { bmp ->
+        if (!bmp.isRecycled) {
+            Image(
+                bitmap = bmp.asImageBitmap(),
+                contentDescription = "PDF page",
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(5.dp)
+                    .background(Color.White),
+                contentScale = ContentScale.FillWidth
+            )
+        }
+    }
+}
 
 internal class PdfRender(
     private val fileDescriptor: ParcelFileDescriptor
 ) {
     private val pdfRenderer = PdfRenderer(fileDescriptor)
     val pageCount get() = pdfRenderer.pageCount
+
+    // LRU Cache for Bitmaps
+    private val bitmapCache = LruCache<String, Bitmap>(4 * 1024 * 1024) // 4MB cache size
     private val mutex = Mutex()
     private val coroutineScope = CoroutineScope(Dispatchers.Default + SupervisorJob())
 
     val pageLists: List<Page> = List(pdfRenderer.pageCount) { index ->
-        Page(index, pdfRenderer, coroutineScope, mutex)
+        Page(index, pdfRenderer, bitmapCache, coroutineScope, mutex)
     }
 
     fun close() {
@@ -195,21 +161,28 @@ internal class PdfRender(
     class Page(
         private val index: Int,
         private val pdfRenderer: PdfRenderer,
+
+        private val bitmapCache: LruCache<String, Bitmap>
+        ,
         private val coroutineScope: CoroutineScope,
         private val mutex: Mutex
     ) {
-        var isLoaded = false
-        var job: Job? = null
-        val dimension = pdfRenderer.openPage(index).use { it.width to it.height }
         val pageContent = MutableStateFlow<Bitmap?>(null)
+        private var renderJob: Job? = null
 
         fun load(scale: Float) {
-            job?.cancel() // Cancel any ongoing rendering before starting a new one
-            job = coroutineScope.launch {
+            renderJob?.cancel()
+            renderJob = coroutineScope.launch {
                 mutex.withLock {
-                    val bitmap = renderPage(scale)
-                    isLoaded = true
-                    pageContent.emit(bitmap)
+                    val cacheKey = "$index-${scale}"
+                    val cachedBitmap = bitmapCache.get(cacheKey)
+                    if (cachedBitmap != null) {
+                        pageContent.emit(cachedBitmap)
+                    } else {
+                        val bitmap = renderPage(scale)
+                        bitmapCache.put(cacheKey, bitmap)
+                        pageContent.emit(bitmap)
+                    }
                 }
             }
         }
@@ -225,15 +198,9 @@ internal class PdfRender(
         }
 
         fun recycle() {
-            job?.cancel() // Ensure any pending rendering job is canceled
-            val bitmap = pageContent.value
-            pageContent.tryEmit(null) // Set the flow to null before recycling
-            bitmap?.takeIf { !it.isRecycled }?.recycle() // Check to prevent double recycling
-        }
-
-        fun heightByWidth(width: Int): Int {
-            val ratio = dimension.first.toFloat() / dimension.second
-            return (width / ratio).toInt()
+            renderJob?.cancel()
+            pageContent.value?.recycle()
+            pageContent.tryEmit(null)
         }
     }
 }
@@ -256,6 +223,29 @@ fun extractTextFromPage(pdfFile: File, pageNumber: Int): String {
     }
     return extractedText
 }
+
+fun extractTextWithCoordinates(pdfFile: File, pageNumber: Int): List<Triple<String, Float, Float>> {
+    val textWithCoordinates = mutableListOf<Triple<String, Float, Float>>()
+
+    PDDocument.load(pdfFile).use { document ->
+        if (pageNumber < document.numberOfPages && pageNumber >= 0) {
+            val stripper = object : PDFTextStripper() {
+                override fun writeString(text: String, textPositions: List<TextPosition>) {
+                    val x = textPositions.first().xDirAdj
+                    val y = textPositions.first().yDirAdj
+                    textWithCoordinates.add(Triple(text, x, y))
+                }
+            }
+            stripper.startPage = pageNumber + 1
+            stripper.endPage = pageNumber + 1
+            stripper.getText(document)
+        } else {
+            throw IllegalArgumentException("Invalid page number.")
+        }
+    }
+    return textWithCoordinates
+}
+
 
 
 @Composable
